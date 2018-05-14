@@ -56,18 +56,20 @@ void reverse_complement_naive(char *a, int len) {
 }
 #endif
 
-//typedef struct __declspec(align(32)) { int i[8]; } __m256i;
-
 struct Kmer {
 	union {
-		char data[LENGTH];
+		char data[LENGTH]; /* 512 bits */
 		struct {
-			char data1[LENGTH/2];
-			char data2[LENGTH/2];
+			union{
+				char data1[LENGTH/2]; /* 256 bits */
+				__m256i d1;
+			};
+			union{
+				char data2[LENGTH/2]; /* 256 bits */
+				__m256i d2;
+			};
 		};
 	};
-	__m256i d1;
-	__m256i d2;
 };
 
 struct Kmer kmer_data[NUM_TRANSACTIONS];
@@ -86,8 +88,7 @@ int main(int argc, char **argv) {
     std::string s(LENGTH,0);
     int i;
     uint64_t start, end;
-    __m256i c, b;
-    b = XOR_MASK;
+    __m256i b = XOR_MASK;
 
     std::srand(0);
 
@@ -95,8 +96,6 @@ int main(int argc, char **argv) {
 	    std::generate_n(s.begin(), LENGTH, std::rand);
 	    memcpy(kmer_data[i].data1, s.data(), s.length()/2);
 	    memcpy(kmer_data[i].data2, s.data()+(LENGTH/2), s.length()/2);
-	    kmer_data[i].d1 = SET_MM256(kmer_data[i].data1);
-	    kmer_data[i].d2 = SET_MM256(kmer_data[i].data2);
     }
 
     start = RDTSC_START();
@@ -110,11 +109,11 @@ int main(int argc, char **argv) {
     calculate_complement();
 #elif defined(REV_COMP_ASM)
     for (i = 0; i < NUM_TRANSACTIONS; i++) {
-	    asm volatile("vpxor %%ymm0, %%ymm1, %%ymm2"
-				: "=x" (c)
+	    asm volatile("vpxor %%ymm0, %%ymm0, %%ymm1"
+				: "=x" (kmer_data[i].d1)
 				: "x"(kmer_data[i].d1), "x"(b));
-	    asm volatile("vpxor %%ymm0, %%ymm1, %%ymm2"
-				: "=x" (c)
+	    asm volatile("vpxor %%ymm0, %%ymm0, %%ymm1"
+				: "=x" (kmer_data[i].d2)
 				: "x"(kmer_data[i].d2), "x"(b));
     }
 #endif

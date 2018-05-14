@@ -416,12 +416,12 @@ int fipc_test_stat_print_stats ( int64_t* sample_set, uint64_t sample_size, stat
  */
 int fipc_test_stat_print_raw ( int64_t* sample_set, uint64_t sample_size, uint64_t print_count )
 {
+	uint64_t i;
 	if ( print_count > sample_size )
 		print_count = sample_size;
 
-	int i;
 	for ( i = 0; i < print_count; ++i )
-		printf ( "%d.\t %ld\n", i, sample_set[i] );
+		printf ( "%lu.\t %ld\n", i, sample_set[i] );
 
 	return 0;
 }
