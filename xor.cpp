@@ -29,19 +29,34 @@ using namespace std;
 		a[6], a[5], a[4], a[3], a[2], a[1], a[0]			\
 		)
 
-#define NUM_TRANSACTIONS	1000000
+#define NUM_TRANSACTIONS	10000000
 #define LENGTH			64
+#define REV_COMP_ASM
+#define REV_COMP_LL
 
 int64_t times[NUM_TRANSACTIONS] = {0};
 
+#ifdef REV_COMP1
 __m256i reverse_complement(__m256i a,__m256i b) {
 	return _mm256_xor_si256 (a,b);
 }
+#endif
 
+#ifdef REV_COMP_NAIVE_BYTE
 void reverse_complement_naive(char *a, int len) {
 	for (int i = 0; i < len; i++)
 		a[i] ^= 0x77;
 }
+#elif defined(REV_COMP_LL)
+void reverse_complement_naive(char *a, int len) {
+	uint64_t *_a = (uint64_t*) a;
+	for (int i = 0; i < len/8; i++) {
+		_a[i] ^= 0x7777777777777777;
+	}
+}
+#endif
+
+//typedef struct __declspec(align(32)) { int i[8]; } __m256i;
 
 struct Kmer {
 	union {
@@ -57,10 +72,22 @@ struct Kmer {
 
 struct Kmer kmer_data[NUM_TRANSACTIONS];
 
+#ifdef REV_COMP1
+static __attribute__((noinline)) void calculate_complement(void)
+{
+    for (int i = 0; i < NUM_TRANSACTIONS; i++) {
+	    reverse_complement(kmer_data[i].d1, XOR_MASK);
+	    reverse_complement(kmer_data[i].d2, XOR_MASK);
+    }
+}
+#endif
+
 int main(int argc, char **argv) {
     std::string s(LENGTH,0);
     int i;
     uint64_t start, end;
+    __m256i c, b;
+    b = XOR_MASK;
 
     std::srand(0);
 
@@ -73,17 +100,30 @@ int main(int argc, char **argv) {
     }
 
     start = RDTSC_START();
+
+#ifdef REV_COMP1
     for (i = 0; i < NUM_TRANSACTIONS; i++) {
 	    reverse_complement(kmer_data[i].d1, XOR_MASK);
 	    reverse_complement(kmer_data[i].d2, XOR_MASK);
     }
+#elif defined(REV_COMP2)
+    calculate_complement();
+#elif defined(REV_COMP_ASM)
+    for (i = 0; i < NUM_TRANSACTIONS; i++) {
+	    asm volatile("vpxor %%ymm0, %%ymm1, %%ymm2"
+				: "=x" (c)
+				: "x"(kmer_data[i].d1), "x"(b));
+	    asm volatile("vpxor %%ymm0, %%ymm1, %%ymm2"
+				: "=x" (c)
+				: "x"(kmer_data[i].d2), "x"(b));
+    }
+#endif
     end = RDTSCP();
     cout << "(AVX2 xor) Time taken for " << NUM_TRANSACTIONS << " transactions: " << (float)(end - start)/NUM_TRANSACTIONS << endl;
 
     start = RDTSC_START();
     for (i = 0; i < NUM_TRANSACTIONS; i++) {
-	    reverse_complement_naive(kmer_data[i].data1, LENGTH/2);
-	    reverse_complement_naive(kmer_data[i].data2, LENGTH/2);
+	    reverse_complement_naive(kmer_data[i].data, LENGTH);
     }
     end = RDTSCP();
     cout << "(byte-wise xor) Time taken for " << NUM_TRANSACTIONS << " transactions: " << (float)(end - start)/NUM_TRANSACTIONS << endl;
