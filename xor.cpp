@@ -96,9 +96,9 @@ void do_naive_xor8(void)
 		reverse_complement_naive(kmer_data[i].data, LENGTH, 8);
 	}
 	end = RDTSCP();
-	cout << "(xor 8-bit) Time taken for " << NUM_TRANSACTIONS <<
-	    " transactions: " << (float)(end -
-					 start) / NUM_TRANSACTIONS << endl;
+	cout << "[8-bit xor: " << __func__ <<
+	    "] Cycles for xor of 512 bits (average over " << NUM_TRANSACTIONS <<
+	    " iterations): " << (float)(end - start) / NUM_TRANSACTIONS << endl;
 }
 
 void do_naive_xor64(void)
@@ -111,9 +111,10 @@ void do_naive_xor64(void)
 		reverse_complement_naive(kmer_data[i].data, LENGTH, 64);
 	}
 	end = RDTSCP();
-	cout << "(xor 64bit) Time taken for " << NUM_TRANSACTIONS <<
-	    " transactions: " << (float)(end -
-					 start) / NUM_TRANSACTIONS << endl;
+
+	cout << "[64-bit xor: " << __func__ <<
+	    "] Cycles for xor of 512 bits (average over " << NUM_TRANSACTIONS <<
+	    " iterations): " << (float)(end - start) / NUM_TRANSACTIONS << endl;
 }
 
 void do_simd_xor_intrinsic(void)
@@ -127,16 +128,37 @@ void do_simd_xor_intrinsic(void)
 		reverse_complement_intrinsic(kmer_data[i].d2, XOR_MASK);
 	}
 	end = RDTSCP();
-	cout << "(xor avx2-gccintrinsic) Time taken for " << NUM_TRANSACTIONS <<
-	    " transactions: " << (float)(end -
-					 start) / NUM_TRANSACTIONS << endl;
+
+	cout << "[256-bit vpxor(gcc intrinsic): " << __func__ <<
+	    "] Cycles for xor of 512 bits (average over " << NUM_TRANSACTIONS <<
+	    " iterations): " << (float)(end - start) / NUM_TRANSACTIONS << endl;
 	cout <<
 	    "Warning: Do NOT trust the above number as the compiler reorders" <<
 	    " the vpxor instruction after rdtscp. Barriers didn't help!" <<
 	    endl;
 }
 
-void do_simd_xor_asm(void)
+void do_simd_xor_asm_normal(void)
+{
+	int i;
+	uint64_t start, end;
+	__m256i b = XOR_MASK;
+	start = RDTSC_START();
+
+	for (i = 0; i < NUM_TRANSACTIONS; i++) {
+		asm volatile ("vpxor %%ymm1, %%ymm0, %%ymm0":"=x"
+			      (kmer_data[i].d1):"x"(kmer_data[i].d1), "x"(b));
+		asm volatile ("vpxor %%ymm2, %%ymm3, %%ymm3":"=x"
+			      (kmer_data[i].d2):"x"(kmer_data[i].d2), "x"(b));
+	}
+	end = RDTSCP();
+
+	cout << "[256-bit vpxor(asm version): " << __func__ <<
+	    "] Cycles for xor of 512 bits (average over " << NUM_TRANSACTIONS <<
+	    " iterations): " << (float)(end - start) / NUM_TRANSACTIONS << endl;
+}
+
+void do_simd_xor_asm_vectorized(void)
 {
 	int i;
 	uint64_t start, end;
@@ -156,10 +178,10 @@ void do_simd_xor_asm(void)
 			      "x"(b));
 	}
 	end = RDTSCP();
-	cout << "(AVX2 xor) Time taken for " << NUM_TRANSACTIONS <<
-	    " transactions: " << (float)(end -
-					 start) / NUM_TRANSACTIONS << endl;
 
+	cout << "[256-bit vpxor(asm loop-vectorized): " << __func__ <<
+	    "] Cycles for xor of 512 bits (average over " << NUM_TRANSACTIONS <<
+	    " iterations): " << (float)(end - start) / NUM_TRANSACTIONS << endl;
 }
 
 int main(int argc, char **argv)
@@ -168,5 +190,6 @@ int main(int argc, char **argv)
 	do_naive_xor8();
 	do_naive_xor64();
 	do_simd_xor_intrinsic();
-	do_simd_xor_asm();
+	do_simd_xor_asm_normal();
+	do_simd_xor_asm_vectorized();
 }
