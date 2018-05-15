@@ -20,29 +20,6 @@ using namespace std;
 
 int64_t times[NUM_TRANSACTIONS] = { 0 };
 
-#ifdef REV_COMP1
-__m256i reverse_complement(__m256i a, __m256i b)
-{
-	return _mm256_xor_si256(a, b);
-}
-#endif
-
-#ifdef REV_COMP_NAIVE_BYTE
-void reverse_complement_naive(char *a, int len)
-{
-	for (int i = 0; i < len; i++)
-		a[i] ^= 0x77;
-}
-#elif defined(REV_COMP_LL)
-void reverse_complement_naive(char *a, int len)
-{
-	uint64_t *_a = (uint64_t *) a;
-	for (int i = 0; i < len / 8; i++) {
-		_a[i] ^= 0x7777777777777777;
-	}
-}
-#endif
-
 struct Kmer {
 	union {
 		char data[LENGTH];	/* 512 bits */
@@ -59,19 +36,41 @@ struct Kmer {
 	};
 };
 
+// for storing kmer data
 struct Kmer kmer_data[NUM_TRANSACTIONS];
 
-#ifdef REV_COMP1
-static __attribute__ ((noinline))
-void calculate_complement(void)
+// uses the native xor instruction to xor 8-bit or 64-bit wide
+// data according to the last parameter
+void reverse_complement_naive(char *a, int len, int width)
 {
-	for (int i = 0; i < NUM_TRANSACTIONS; i++) {
-		reverse_complement(kmer_data[i].d1, XOR_MASK);
-		reverse_complement(kmer_data[i].d2, XOR_MASK);
+	switch (width) {
+	case 8:
+		{
+			for (int i = 0; i < len; i++)
+				a[i] ^= 0x77;
+			break;
+		}
+	case 64:
+		{
+			uint64_t *_a = (uint64_t *) a;
+			for (int i = 0; i < len / 8; i++) {
+				_a[i] ^= 0x7777777777777777;
+			}
+			break;
+		}
+	default:
+		cerr << "Unknown bitwidth requested" << endl;
+		break;
 	}
 }
-#endif
 
+// gcc intrinisic for computing 256-bit avx2 xor
+inline __m256i reverse_complement_intrinsic(__m256i a, __m256i b)
+{
+	return _mm256_xor_si256(a, b);
+}
+
+// generate random data from std::rand
 void generate_random_data(void)
 {
 	int i;
@@ -87,24 +86,63 @@ void generate_random_data(void)
 	}
 }
 
-int main(int argc, char **argv)
+void do_naive_xor8(void)
+{
+	int i;
+	uint64_t start, end;
+
+	start = RDTSC_START();
+	for (i = 0; i < NUM_TRANSACTIONS; i++) {
+		reverse_complement_naive(kmer_data[i].data, LENGTH, 8);
+	}
+	end = RDTSCP();
+	cout << "(xor 8-bit) Time taken for " << NUM_TRANSACTIONS <<
+	    " transactions: " << (float)(end -
+					 start) / NUM_TRANSACTIONS << endl;
+}
+
+void do_naive_xor64(void)
+{
+	int i;
+	uint64_t start, end;
+
+	start = RDTSC_START();
+	for (i = 0; i < NUM_TRANSACTIONS; i++) {
+		reverse_complement_naive(kmer_data[i].data, LENGTH, 64);
+	}
+	end = RDTSCP();
+	cout << "(xor 64bit) Time taken for " << NUM_TRANSACTIONS <<
+	    " transactions: " << (float)(end -
+					 start) / NUM_TRANSACTIONS << endl;
+}
+
+void do_simd_xor_intrinsic(void)
+{
+	int i;
+	uint64_t start, end;
+
+	start = RDTSC_START();
+	for (i = 0; i < NUM_TRANSACTIONS; i++) {
+		reverse_complement_intrinsic(kmer_data[i].d1, XOR_MASK);
+		reverse_complement_intrinsic(kmer_data[i].d2, XOR_MASK);
+	}
+	end = RDTSCP();
+	cout << "(xor avx2-gccintrinsic) Time taken for " << NUM_TRANSACTIONS <<
+	    " transactions: " << (float)(end -
+					 start) / NUM_TRANSACTIONS << endl;
+	cout <<
+	    "Warning: Do NOT trust the above number as the compiler reorders" <<
+	    " the vpxor instruction after rdtscp. Barriers didn't help!" <<
+	    endl;
+}
+
+void do_simd_xor_asm(void)
 {
 	int i;
 	uint64_t start, end;
 	__m256i b = XOR_MASK;
-
-	generate_random_data();
-
 	start = RDTSC_START();
 
-#ifdef REV_COMP1
-	for (i = 0; i < NUM_TRANSACTIONS; i++) {
-		reverse_complement(kmer_data[i].d1, XOR_MASK);
-		reverse_complement(kmer_data[i].d2, XOR_MASK);
-	}
-#elif defined(REV_COMP2)
-	calculate_complement();
-#elif defined(REV_COMP_ASM)
 	for (i = 0; i < NUM_TRANSACTIONS - 1; i = i + 2) {
 		asm volatile ("vpxor %%ymm1, %%ymm0, %%ymm0":"=x"
 			      (kmer_data[i].d1):"x"(kmer_data[i].d1), "x"(b));
@@ -117,18 +155,18 @@ int main(int argc, char **argv)
 			      (kmer_data[i + 1].d2):"x"(kmer_data[i + 1].d2),
 			      "x"(b));
 	}
-#endif
 	end = RDTSCP();
 	cout << "(AVX2 xor) Time taken for " << NUM_TRANSACTIONS <<
 	    " transactions: " << (float)(end -
 					 start) / NUM_TRANSACTIONS << endl;
 
-	start = RDTSC_START();
-	for (i = 0; i < NUM_TRANSACTIONS; i++) {
-		reverse_complement_naive(kmer_data[i].data, LENGTH);
-	}
-	end = RDTSCP();
-	cout << "(byte-wise xor) Time taken for " << NUM_TRANSACTIONS <<
-	    " transactions: " << (float)(end -
-					 start) / NUM_TRANSACTIONS << endl;
+}
+
+int main(int argc, char **argv)
+{
+	generate_random_data();
+	do_naive_xor8();
+	do_naive_xor64();
+	do_simd_xor_intrinsic();
+	do_simd_xor_asm();
 }
